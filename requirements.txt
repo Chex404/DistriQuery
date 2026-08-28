@@ -1,8 +1,16 @@
-# Core 
+# Core
 numpy
 pypdf
 pytest
 
+# Phase B — API + database
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+pymysql
+python-multipart
+httpx
+
 # Optional — uncomment to use real backends instead of the test/demo stand-ins
-# sentence-transformers   # needed for EMBEDDING_BACKEND=sentence-transformers
-# anthropic               # needed for LLM_BACKEND=anthropic
+# sentence-transformers
+# anthropic
