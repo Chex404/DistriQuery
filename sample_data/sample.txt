@@ -1,0 +1,15 @@
+DistriQuery Project Overview
+
+DistriQuery is a distributed, multi-tenant retrieval-augmented generation platform. It is designed to handle document ingestion for multiple tenants at once, using Kafka to decouple document upload from document processing.
+
+Ingestion Pipeline
+
+When a tenant uploads a document, the FastAPI backend validates the request, stores the raw file in object storage, and publishes an event to Kafka. A pool of ingestion workers, organized as a Kafka consumer group, parse the document, split it into chunks, and generate embeddings for each chunk. The resulting vectors are stored in a vector database alongside metadata in PostgreSQL.
+
+Query Pipeline
+
+When a user submits a query, a query planner first decides on a retrieval strategy. Simple factual questions are answered with a single hybrid retrieval step combining BM25 and dense retrieval. More complex questions may require multi-hop retrieval, where the system issues multiple retrieval queries in sequence, using evidence found in earlier steps to inform later ones.
+
+Reranking and Generation
+
+After retrieval, a cross-encoder reranker re-scores the retrieved chunks to produce a more precise shortlist. The top chunks are then assembled into a prompt for the language model, which generates a final answer along with citations back to the source documents.
