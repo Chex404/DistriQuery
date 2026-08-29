@@ -2,6 +2,8 @@
 numpy
 pypdf
 pytest
+python-docx
+
 
 # Phase B — API + database
 fastapi
@@ -10,6 +12,7 @@ sqlalchemy>=2.0
 pymysql
 python-multipart
 httpx
+python-dotenv
 
 # Optional — uncomment to use real backends instead of the test/demo stand-ins
 # sentence-transformers

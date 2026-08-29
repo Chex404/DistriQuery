@@ -1,17 +1,10 @@
-"""FastAPI application — Phase B.
+"""FastAPI application — Phase C.
 
-Wraps the Phase A Pipeline in real HTTP endpoints and makes document
-*metadata* durable in Postgres. Note what this does NOT do yet:
-
-- Vectors are still in-memory only (lost on restart) — real persistence
-  arrives in Phase D when Qdrant + Kafka-based ingestion replace this.
-- There's no tenant scoping or auth — that's Phase C.
-- Retrieval is still dense-only, one shared Pipeline instance for
-  everyone — hybrid retrieval and per-tenant isolation both come later.
-
-Table creation is deliberately NOT done automatically on app startup —
-run `python scripts/init_db.py` once before starting the API for the
-first time.
+Every endpoint except /health now requires a valid X-API-Key header
+(auth.py), and every document/query operation is scoped to that tenant's
+own Pipeline (tenancy.py) and own rows in the documents table. See
+models.py's docstring for the MySQL-vs-Postgres row-level-security
+tradeoff this design has to compensate for in application code.
 """
 
 import os
@@ -23,17 +16,17 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from distriquery.db.models import Document
+from distriquery.api.auth import get_current_tenant
+from distriquery.db.models import Document, Tenant
 from distriquery.db.session import get_db
 from distriquery.pipeline import Pipeline
+from distriquery.tenancy import get_pipeline_for_tenant
 
-app = FastAPI(title="DistriQuery API", version="phase-b")
-
-_default_pipeline = Pipeline()
+app = FastAPI(title="DistriQuery API", version="phase-c")
 
 
-def get_pipeline() -> Pipeline:
-    return _default_pipeline
+def get_tenant_pipeline(tenant: Tenant = Depends(get_current_tenant)) -> Pipeline:
+    return get_pipeline_for_tenant(tenant.id)
 
 
 def _upload_dir() -> Path:
@@ -56,21 +49,33 @@ def health():
 def upload_document(
     file: UploadFile,
     db: Session = Depends(get_db),
-    pipeline: Pipeline = Depends(get_pipeline),
+    tenant: Tenant = Depends(get_current_tenant),
+    pipeline: Pipeline = Depends(get_tenant_pipeline),
 ):
-    dest_path = _upload_dir() / file.filename
+    tenant_dir = _upload_dir() / str(tenant.id)
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = tenant_dir / file.filename
     with dest_path.open("wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    chunk_count = pipeline.ingest_document(str(dest_path))
+    try:
+        chunk_count = pipeline.ingest_document(str(dest_path))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    existing = db.query(Document).filter(Document.source == str(dest_path)).one_or_none()
+    existing = (
+        db.query(Document)
+        .filter(Document.tenant_id == tenant.id, Document.source == str(dest_path))
+        .one_or_none()
+    )
     if existing:
         existing.version += 1
         existing.chunk_count = chunk_count
         document = existing
     else:
-        document = Document(source=str(dest_path), version=1, chunk_count=chunk_count)
+        document = Document(
+            tenant_id=tenant.id, source=str(dest_path), version=1, chunk_count=chunk_count
+        )
         db.add(document)
 
     db.commit()
@@ -78,6 +83,7 @@ def upload_document(
 
     return {
         "document_id": document.id,
+        "tenant_id": tenant.id,
         "source": document.source,
         "version": document.version,
         "chunk_count": document.chunk_count,
@@ -85,7 +91,11 @@ def upload_document(
 
 
 @app.post("/query")
-def query(request: QueryRequest, pipeline: Pipeline = Depends(get_pipeline)):
+def query(
+    request: QueryRequest,
+    tenant: Tenant = Depends(get_current_tenant),
+    pipeline: Pipeline = Depends(get_tenant_pipeline),
+):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="'question' must not be empty")
 

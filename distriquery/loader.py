@@ -9,7 +9,7 @@ way this module's tests do — that's the point of keeping it isolated.
 from dataclasses import dataclass
 from pathlib import Path
 
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}  # later: .html, .pptx, etc.
 
 
 @dataclass
@@ -38,6 +38,8 @@ def load_document(path: str) -> Document:
 
     if extension == ".pdf":
         text = _load_pdf(file_path)
+    elif extension == ".docx":
+        text = _load_docx(file_path)
     else:
         text = file_path.read_text(encoding="utf-8", errors="replace")
 
@@ -51,3 +53,12 @@ def _load_pdf(file_path: Path) -> str:
     reader = PdfReader(str(file_path))
     pages = [page.extract_text() or "" for page in reader.pages]
     return "\n\n".join(pages)
+
+
+def _load_docx(file_path: Path) -> str:
+    # Imported lazily so .txt/.md/.pdf-only usage never needs python-docx installed.
+    from docx import Document as DocxDocument
+
+    docx_file = DocxDocument(str(file_path))
+    paragraphs = [p.text for p in docx_file.paragraphs]
+    return "\n\n".join(paragraphs)

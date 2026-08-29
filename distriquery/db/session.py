@@ -31,4 +31,6 @@ def get_db():
 
 
 def create_all_tables() -> None:
+    from distriquery.db import models  # noqa: F401 - import registers Tenant/Document on Base.metadata
+
     Base.metadata.create_all(bind=engine)

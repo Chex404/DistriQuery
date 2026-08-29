@@ -9,6 +9,12 @@ premature engineering the project brief warns against.
 
 import os
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+# Loads a .env file from the project root (if one exists) into the process's
+# environment variables, BEFORE the Settings fields below read them. Without
+# this call, a .env file would just sit there unused.
+load_dotenv()
 
 
 def _env_int(name: str, default: int) -> int:
