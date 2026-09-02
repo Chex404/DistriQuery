@@ -1,9 +1,4 @@
-"""Shared pytest fixtures.
-
-pytest auto-discovers this file — test_api.py and test_multitenancy.py
-use `client` and `create_tenant_helper` without importing anything from
-here directly.
-"""
+"""Shared pytest fixtures."""
 
 import secrets
 
@@ -12,11 +7,32 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from distriquery.api.main import app
+from distriquery.api.main import app, get_kafka_producer
 from distriquery.db.models import Tenant
 from distriquery.db.session import Base, get_db
 from distriquery.tenancy import reset_registry
 
+
+@pytest.fixture(autouse=True)
+def _use_fast_test_backends(monkeypatch):
+    """Forces every test to use fast, isolated backends (hashing embedder,
+    in-memory vector store, fake LLM) regardless of what's in the
+    developer's real .env file.
+
+    Without this, tests silently used the REAL settings object — meaning
+    real sentence-transformers model loads (slow) and, more seriously,
+    the REAL persistent Qdrant instance, so leftover data from manual
+    testing bled into automated test assertions ("empty index" tests
+    weren't actually empty). monkeypatch.setattr on the shared settings
+    object affects every module that imports it (tenancy.py, pipeline.py),
+    and is automatically undone after each test.
+    """
+    from distriquery.config import settings
+
+    monkeypatch.setattr(settings, "embedding_backend", "hashing")
+    monkeypatch.setattr(settings, "embedding_dim", 128)
+    monkeypatch.setattr(settings, "llm_backend", "fake")
+    monkeypatch.setattr(settings, "vector_store_backend", "in-memory")
 
 @pytest.fixture
 def db_session_factory(tmp_path):
@@ -27,8 +43,30 @@ def db_session_factory(tmp_path):
     return sessionmaker(bind=engine)
 
 
+class FakeKafkaFuture:
+    def get(self, timeout=None):
+        return None
+
+
+class FakeKafkaProducer:
+    def __init__(self):
+        self.sent_events = []
+
+    def send(self, topic, value):
+        self.sent_events.append(value)
+        return FakeKafkaFuture()
+
+    def flush(self):
+        pass
+
+
 @pytest.fixture
-def client(tmp_path, monkeypatch, db_session_factory):
+def fake_kafka_producer():
+    return FakeKafkaProducer()
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch, db_session_factory, fake_kafka_producer):
     def override_get_db():
         db = db_session_factory()
         try:
@@ -38,6 +76,7 @@ def client(tmp_path, monkeypatch, db_session_factory):
 
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_kafka_producer] = lambda: fake_kafka_producer
     reset_registry()
 
     with TestClient(app) as test_client:
@@ -49,8 +88,6 @@ def client(tmp_path, monkeypatch, db_session_factory):
 
 @pytest.fixture
 def create_tenant_helper(db_session_factory):
-    """Returns a callable: create_tenant_helper(name="x") -> (tenant_id, api_key)."""
-
     def _create(name: str = "tenant") -> tuple:
         db = db_session_factory()
         try:
@@ -64,3 +101,20 @@ def create_tenant_helper(db_session_factory):
             db.close()
 
     return _create
+
+
+@pytest.fixture
+def process_worker_events(db_session_factory, fake_kafka_producer):
+    def _process_all():
+        from distriquery.ingestion_worker import process_event
+
+        db = db_session_factory()
+        try:
+            for event in fake_kafka_producer.sent_events:
+                process_event(event, db=db)
+        finally:
+            db.close()
+        fake_kafka_producer.sent_events.clear()
+
+    return _process_all
+

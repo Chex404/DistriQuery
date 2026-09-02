@@ -38,6 +38,10 @@ class Document(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
     source = Column(String(255), nullable=False)
     version = Column(Integer, nullable=False, default=1)
+    # "pending" -> published to Kafka, not yet processed by a worker
+    # "ingested" -> a worker successfully chunked/embedded/stored it
+    # "failed" -> a worker gave up (arrives with DLQ, next step)
+    status = Column(String(20), nullable=False, default="pending")
     chunk_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

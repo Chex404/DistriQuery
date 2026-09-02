@@ -1,6 +1,6 @@
 from distriquery.config import Settings
 from distriquery.pipeline import Pipeline
-
+from distriquery.vectorstore import InMemoryVectorStore
 
 def _test_settings(tmp_chunk_size: int = 300) -> Settings:
     return Settings(
@@ -62,3 +62,18 @@ def test_to_dict_produces_json_serializable_structure(tmp_path):
     payload = pipeline.answer("What does reranking use?")
 
     json.dumps(payload.to_dict())
+
+def test_explicitly_passed_empty_vector_store_is_not_silently_replaced():
+    """Regression test for a real bug: `vector_store or InMemoryVectorStore()`
+    looks correct but isn't — Python's `or` checks truthiness, and any
+    VectorStore with 0 items is falsy (because VectorStore defines
+    __len__). That silently discarded a perfectly valid, explicitly-passed
+    empty store (e.g. a fresh QdrantVectorStore for a new tenant) and
+    replaced it with a brand new InMemoryVectorStore instead.
+    """
+    explicit_store = InMemoryVectorStore()
+    assert len(explicit_store) == 0
+
+    pipeline = Pipeline(settings=_test_settings(), vector_store=explicit_store)
+
+    assert pipeline.vector_store is explicit_store

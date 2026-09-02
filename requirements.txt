@@ -13,6 +13,8 @@ pymysql
 python-multipart
 httpx
 python-dotenv
+kafka-python
+qdrant-client
 
 # Optional — uncomment to use real backends instead of the test/demo stand-ins
 # sentence-transformers

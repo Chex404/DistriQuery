@@ -5,7 +5,7 @@ import io
 from distriquery.tenancy import get_pipeline_for_tenant, reset_registry
 
 
-def test_query_never_returns_another_tenants_content(client, create_tenant_helper):
+def test_query_never_returns_another_tenants_content(client, create_tenant_helper, process_worker_events):
     _, key_a = create_tenant_helper(name="acme")
     _, key_b = create_tenant_helper(name="globex")
 
@@ -15,6 +15,7 @@ def test_query_never_returns_another_tenants_content(client, create_tenant_helpe
         files={"file": ("secret.txt", io.BytesIO(secret_content), "text/plain")},
         headers={"X-API-Key": key_a},
     )
+    process_worker_events()
 
     response = client.post(
         "/query",
@@ -28,7 +29,7 @@ def test_query_never_returns_another_tenants_content(client, create_tenant_helpe
     assert "42" not in body["answer"]
 
 
-def test_each_tenant_only_sees_their_own_uploaded_documents(client, create_tenant_helper):
+def test_each_tenant_only_sees_their_own_uploaded_documents(client, create_tenant_helper, process_worker_events):
     _, key_a = create_tenant_helper(name="acme")
     _, key_b = create_tenant_helper(name="globex")
 
@@ -42,6 +43,7 @@ def test_each_tenant_only_sees_their_own_uploaded_documents(client, create_tenan
         files={"file": ("b.txt", io.BytesIO(b"Content belonging to tenant B only."), "text/plain")},
         headers={"X-API-Key": key_b},
     )
+    process_worker_events()
 
     response_a = client.post(
         "/query", json={"question": "tenant content"}, headers={"X-API-Key": key_a}
@@ -53,10 +55,11 @@ def test_each_tenant_only_sees_their_own_uploaded_documents(client, create_tenan
     sources_a = {c["source"] for c in response_a.json()["citations"]}
     sources_b = {c["source"] for c in response_b.json()["citations"]}
 
+    assert sources_a, "expected tenant A to actually get citations back"
+    assert sources_b, "expected tenant B to actually get citations back"
     assert all("a.txt" in s for s in sources_a)
     assert all("b.txt" in s for s in sources_b)
     assert sources_a.isdisjoint(sources_b)
-
 
 def test_uploading_identically_named_files_does_not_collide_on_disk(client, create_tenant_helper):
     _, key_a = create_tenant_helper(name="acme")

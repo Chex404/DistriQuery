@@ -1,14 +1,16 @@
-"""FastAPI application — Phase C.
+"""FastAPI application — Phase D.
 
-Every endpoint except /health now requires a valid X-API-Key header
-(auth.py), and every document/query operation is scoped to that tenant's
-own Pipeline (tenancy.py) and own rows in the documents table. See
-models.py's docstring for the MySQL-vs-Postgres row-level-security
-tradeoff this design has to compensate for in application code.
+/documents no longer does the actual parsing/chunking/embedding — it
+saves the file, creates a "pending" Document row, and publishes an event
+to Kafka. A separate process (scripts/ingestion_worker.py) consumes that
+event and does the real work, writing to the same Qdrant collection this
+API's /query endpoint reads from.
 """
 
+import json
 import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -17,12 +19,28 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from distriquery.api.auth import get_current_tenant
+from distriquery.config import settings
 from distriquery.db.models import Document, Tenant
 from distriquery.db.session import get_db
+from distriquery.loader import SUPPORTED_EXTENSIONS
 from distriquery.pipeline import Pipeline
 from distriquery.tenancy import get_pipeline_for_tenant
 
-app = FastAPI(title="DistriQuery API", version="phase-c")
+app = FastAPI(title="DistriQuery API", version="phase-d")
+
+_kafka_producer = None
+
+
+def get_kafka_producer():
+    global _kafka_producer
+    if _kafka_producer is None:
+        from kafka import KafkaProducer
+
+        _kafka_producer = KafkaProducer(
+            bootstrap_servers=settings.kafka_bootstrap_servers.split(","),
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        )
+    return _kafka_producer
 
 
 def get_tenant_pipeline(tenant: Tenant = Depends(get_current_tenant)) -> Pipeline:
@@ -50,18 +68,20 @@ def upload_document(
     file: UploadFile,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
-    pipeline: Pipeline = Depends(get_tenant_pipeline),
+    producer=Depends(get_kafka_producer),
 ):
+    extension = Path(file.filename).suffix.lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{extension}'. Supported: {sorted(SUPPORTED_EXTENSIONS)}",
+        )
+
     tenant_dir = _upload_dir() / str(tenant.id)
     tenant_dir.mkdir(parents=True, exist_ok=True)
     dest_path = tenant_dir / file.filename
     with dest_path.open("wb") as f:
         shutil.copyfileobj(file.file, f)
-
-    try:
-        chunk_count = pipeline.ingest_document(str(dest_path))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
     existing = (
         db.query(Document)
@@ -70,22 +90,52 @@ def upload_document(
     )
     if existing:
         existing.version += 1
-        existing.chunk_count = chunk_count
+        existing.status = "pending"
         document = existing
     else:
-        document = Document(
-            tenant_id=tenant.id, source=str(dest_path), version=1, chunk_count=chunk_count
-        )
+        document = Document(tenant_id=tenant.id, source=str(dest_path), version=1, status="pending")
         db.add(document)
 
     db.commit()
     db.refresh(document)
+
+    event = {
+        "event_id": str(uuid.uuid4()),
+        "tenant_id": tenant.id,
+        "document_id": document.id,
+        "path": str(dest_path),
+    }
+    future = producer.send(settings.kafka_ingestion_topic, event)
+    future.get(timeout=10)
 
     return {
         "document_id": document.id,
         "tenant_id": tenant.id,
         "source": document.source,
         "version": document.version,
+        "status": document.status,
+    }
+
+
+@app.get("/documents/{document_id}")
+def get_document_status(
+    document_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.tenant_id == tenant.id)
+        .one_or_none()
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return {
+        "document_id": document.id,
+        "source": document.source,
+        "version": document.version,
+        "status": document.status,
         "chunk_count": document.chunk_count,
     }
 

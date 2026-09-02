@@ -40,6 +40,11 @@ class Settings:
     # "anthropic" = real LLM call (needs an API key).
     llm_backend: str = os.environ.get("LLM_BACKEND", "fake")
     anthropic_model: str = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    
+    vector_store_backend: str = os.environ.get("VECTOR_STORE_BACKEND", "in-memory")
+    qdrant_url: str = os.environ.get("QDRANT_URL", "http://localhost:6333")
 
+    kafka_bootstrap_servers: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    kafka_ingestion_topic: str = os.environ.get("KAFKA_INGESTION_TOPIC", "document-uploaded")
 
 settings = Settings()

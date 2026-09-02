@@ -8,12 +8,14 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import List
 
+from docx import settings
+
 from distriquery.chunker import chunk_text
 from distriquery.config import Settings, settings as default_settings
 from distriquery.embedder import Embedder, get_embedder
 from distriquery.generator import FakeLLMClient, LLMClient, build_prompt, get_llm_client
 from distriquery.loader import load_document
-from distriquery.vectorstore import InMemoryVectorStore, SearchResult
+from distriquery.vectorstore import InMemoryVectorStore, SearchResult, VectorStore
 
 
 @dataclass
@@ -43,7 +45,13 @@ class AnswerPayload:
 
 
 class Pipeline:
-    def __init__(self, settings: Settings = None, embedder: Embedder = None, llm_client: LLMClient = None):
+    def __init__(
+        self,
+        settings: Settings = None,
+        embedder: Embedder = None,
+        llm_client: LLMClient = None,
+        vector_store: VectorStore = None,
+    ):
         self.settings = settings or default_settings
         self.embedder = embedder or get_embedder(
             self.settings.embedding_backend,
@@ -53,8 +61,8 @@ class Pipeline:
         self.llm_client = llm_client or get_llm_client(
             self.settings.llm_backend, model=self.settings.anthropic_model
         )
-        self.vector_store = InMemoryVectorStore()
-
+        self.vector_store = vector_store if vector_store is not None else InMemoryVectorStore()
+    
     def ingest_document(self, path: str) -> int:
         """Load, chunk, embed, and store a document. Returns the number of chunks created."""
         document = load_document(path)
