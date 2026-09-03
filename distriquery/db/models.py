@@ -45,3 +45,20 @@ class Document(Base):
     chunk_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class ProcessedEvent(Base):
+    """Idempotency ledger (Theory Primer, Part 4.4).
+
+    Kafka's at-least-once delivery means the ingestion worker WILL see the
+    same event_id more than once under real failure conditions (a crash
+    right after committing an offset, a consumer group rebalance, etc.).
+    Before doing any real work, the worker checks this table; if the
+    event_id is already here, it skips straight to returning the existing
+    result instead of re-embedding and re-storing the same document.
+    """
+
+    __tablename__ = "processed_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(64), unique=True, nullable=False, index=True)
+    processed_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -16,8 +16,16 @@ import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-# Ordered from "largest structural unit" to "no structure left".
 DEFAULT_SEPARATORS = ["\n\n", "\n", ". ", " ", ""]
+
+# Fixed, arbitrary namespace for deterministic chunk IDs (uuid5) — any fixed
+# UUID works here, it just needs to be constant across the whole app so the
+# same (source, position) always maps to the same chunk_id. This is what
+# makes re-ingesting the same file idempotent at the storage layer: Qdrant's
+# upsert overwrites a point with an existing ID rather than duplicating it,
+# instead of every retry creating a brand-new random ID (Theory Primer,
+# Part 4.4 — idempotent workers, not just deduped events).
+_CHUNK_ID_NAMESPACE = uuid.UUID("c9c8f8d4-2b1e-4a3f-9e1d-1a2b3c4d5e6f")
 
 
 @dataclass
@@ -25,19 +33,17 @@ class Chunk:
     chunk_id: str
     text: str
     source: str
-    position: int  # order of this chunk within its source document
+    position: int
     metadata: dict = field(default_factory=dict)
 
 
 def _split_on_separator(text: str, separator: str) -> List[str]:
     if separator == "":
-        return list(text)  # last resort: one character at a time
+        return list(text)
     return text.split(separator)
 
 
 def _recursive_split(text: str, separators: List[str], chunk_size: int) -> List[str]:
-    """Break text into pieces no larger than chunk_size, preferring the
-    earliest usable separator so structure is preserved as much as possible."""
     if len(text) <= chunk_size:
         return [text] if text else []
 
@@ -47,8 +53,6 @@ def _recursive_split(text: str, separators: List[str], chunk_size: int) -> List[
     separator, remaining_separators = separators[0], separators[1:]
     raw_parts = _split_on_separator(text, separator)
 
-    # Re-attach the separator to each part (except the last) so we don't
-    # silently delete the paragraph breaks / spaces that gave us structure.
     parts = [
         part + separator if i < len(raw_parts) - 1 and separator else part
         for i, part in enumerate(raw_parts)
@@ -66,9 +70,6 @@ def _recursive_split(text: str, separators: List[str], chunk_size: int) -> List[
 
 
 def _merge_with_overlap(pieces: List[str], chunk_size: int, chunk_overlap: int) -> List[str]:
-    """Greedily pack small pieces up to chunk_size, carrying chunk_overlap
-    characters of trailing context forward into the next chunk so a fact
-    sitting near a chunk boundary isn't only ever partially present."""
     if not pieces:
         return []
 
@@ -86,8 +87,6 @@ def _merge_with_overlap(pieces: List[str], chunk_size: int, chunk_overlap: int) 
         overlap_text = current[-chunk_overlap:] if chunk_overlap > 0 else ""
         current = overlap_text + piece
 
-        # A single piece can still exceed chunk_size in rare cases (e.g. one
-        # giant "word" with no spaces) — hard-cut it rather than looping forever.
         while len(current) > chunk_size:
             merged.append(current[:chunk_size])
             current = current[chunk_size - chunk_overlap :] if chunk_overlap > 0 else current[chunk_size:]
@@ -105,12 +104,6 @@ def chunk_text(
     chunk_overlap: int = 50,
     separators: Optional[List[str]] = None,
 ) -> List[Chunk]:
-    """Split `text` into Chunk objects.
-
-    chunk_size / chunk_overlap are in characters, not tokens, for Phase A —
-    token-aware chunking (matching what the embedding model actually counts)
-    is a reasonable upgrade once we wire in a real embedding model in Step 2.
-    """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
     if chunk_overlap < 0:
@@ -123,6 +116,11 @@ def chunk_text(
     merged_pieces = _merge_with_overlap(pieces, chunk_size, chunk_overlap)
 
     return [
-        Chunk(chunk_id=str(uuid.uuid4()), text=piece, source=source, position=position)
+        Chunk(
+            chunk_id=str(uuid.uuid5(_CHUNK_ID_NAMESPACE, f"{source}:{position}")),
+            text=piece,
+            source=source,
+            position=position,
+        )
         for position, piece in enumerate(merged_pieces)
     ]

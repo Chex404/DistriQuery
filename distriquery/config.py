@@ -46,5 +46,7 @@ class Settings:
 
     kafka_bootstrap_servers: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_ingestion_topic: str = os.environ.get("KAFKA_INGESTION_TOPIC", "document-uploaded")
+    kafka_dlq_topic: str = os.environ.get("KAFKA_DLQ_TOPIC", "document-ingestion-dlq")
+    kafka_max_retries: int = _env_int("KAFKA_MAX_RETRIES", 3)
 
 settings = Settings()

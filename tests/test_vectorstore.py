@@ -58,6 +58,16 @@ def test_len_reflects_number_of_stored_chunks():
 
     assert len(store) == 2
 
+def test_adding_same_chunk_id_again_overwrites_not_duplicates():
+    store = InMemoryVectorStore()
+    store.add([_make_chunk("a", "original text")], np.array([[1.0, 0.0]], dtype=np.float32))
+    assert len(store) == 1
+
+    store.add([_make_chunk("a", "updated text")], np.array([[0.0, 1.0]], dtype=np.float32))
+
+    assert len(store) == 1
+    results = store.search(np.array([0.0, 1.0], dtype=np.float32), top_k=1)
+    assert results[0].chunk.text == "updated text"
 
 def test_multiple_add_calls_accumulate():
     store = InMemoryVectorStore()

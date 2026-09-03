@@ -57,6 +57,23 @@ def test_invalid_overlap_raises():
     with pytest.raises(ValueError):
         chunk_text("some text", source="doc1", chunk_size=100, chunk_overlap=100)
 
+def test_chunk_ids_are_deterministic_for_same_source_and_content():
+    text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+
+    chunks_1 = chunk_text(text, source="doc1", chunk_size=30, chunk_overlap=5)
+    chunks_2 = chunk_text(text, source="doc1", chunk_size=30, chunk_overlap=5)
+
+    ids_1 = [c.chunk_id for c in chunks_1]
+    ids_2 = [c.chunk_id for c in chunks_2]
+    assert ids_1 == ids_2
+
+def test_chunk_ids_differ_across_different_sources():
+    text = "Same content, different file."
+
+    chunks_a = chunk_text(text, source="doc_a", chunk_size=100, chunk_overlap=10)
+    chunks_b = chunk_text(text, source="doc_b", chunk_size=100, chunk_overlap=10)
+
+    assert chunks_a[0].chunk_id != chunks_b[0].chunk_id
 
 def test_no_content_lost_ignoring_whitespace():
     text = "abcdefgh " * 100

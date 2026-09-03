@@ -105,16 +105,35 @@ def create_tenant_helper(db_session_factory):
 
 @pytest.fixture
 def process_worker_events(db_session_factory, fake_kafka_producer):
+    """Simulates the ingestion worker processing every event a test's
+    upload(s) published — WITHOUT needing a real Kafka broker or a real
+    running worker process.
+
+    Uses handle_event_with_retries with backoff_seconds=0 (no real
+    sleeping) and the same fake producer as the DLQ target, so tests can
+    also inspect fake_kafka_producer.sent_events for DLQ'd events.
+    """
+
     def _process_all():
-        from distriquery.ingestion_worker import process_event
+        from distriquery.ingestion_worker import handle_event_with_retries
 
         db = db_session_factory()
+        results = []
         try:
-            for event in fake_kafka_producer.sent_events:
-                process_event(event, db=db)
+            events = list(fake_kafka_producer.sent_events)
+            fake_kafka_producer.sent_events.clear()
+            for event in events:
+                succeeded = handle_event_with_retries(
+                    event,
+                    fake_kafka_producer,
+                    dlq_topic="document-ingestion-dlq",
+                    max_retries=3,
+                    backoff_seconds=0,
+                    db=db,
+                )
+                results.append(succeeded)
         finally:
             db.close()
-        fake_kafka_producer.sent_events.clear()
+        return results
 
     return _process_all
-

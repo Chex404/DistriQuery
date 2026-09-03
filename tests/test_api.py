@@ -136,7 +136,7 @@ def test_query_on_empty_index_does_not_crash(client, create_tenant_helper):
     assert response.status_code == 200
     assert response.json()["citations"] == []
 
-def test_worker_marks_document_failed_on_processing_error(
+def test_worker_marks_document_failed_and_sends_to_dlq_on_processing_error(
     client, create_tenant_helper, process_worker_events
 ):
     _, api_key = create_tenant_helper(name="acme")
@@ -152,12 +152,11 @@ def test_worker_marks_document_failed_on_processing_error(
 
     Path(source_path).unlink()
 
-    with pytest.raises(FileNotFoundError):
-        process_worker_events()
+    results = process_worker_events()
+    assert results == [False]
 
     status_response = client.get(f"/documents/{document_id}", headers=headers)
     assert status_response.json()["status"] == "failed"
-
 
 def test_uploading_unsupported_file_type_returns_400_not_500(client, create_tenant_helper):
     _, api_key = create_tenant_helper(name="acme")
