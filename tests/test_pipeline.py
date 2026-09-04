@@ -10,6 +10,8 @@ def _test_settings(tmp_chunk_size: int = 300) -> Settings:
         embedding_backend="hashing",
         embedding_dim=128,
         llm_backend="fake",
+        vector_store_backend="in-memory",
+        reranker_backend="overlap",
     )
 
 
@@ -38,9 +40,24 @@ def test_answer_returns_full_payload_shape(tmp_path):
     assert payload.answer
     assert isinstance(payload.citations, list)
     assert len(payload.citations) > 0
-    assert payload.retrieval.strategy == "dense"
+    assert payload.retrieval.strategy == "hybrid"
+    assert payload.retrieval.reranked is True
     assert "latency_ms" in payload.metrics
+    assert "rerank" in payload.metrics["latency_ms"]
 
+def test_answer_with_rerank_false_skips_reranking(tmp_path):
+    file_path = tmp_path / "doc.txt"
+    file_path.write_text(
+        "The query planner decides between direct, hybrid, multi-hop, and tool retrieval."
+    )
+
+    pipeline = Pipeline(settings=_test_settings())
+    pipeline.ingest_document(str(file_path))
+
+    payload = pipeline.answer("What does the query planner decide between?", rerank=False)
+
+    assert payload.retrieval.reranked is False
+    assert payload.metrics["latency_ms"]["rerank"] == 0.0
 
 def test_answer_on_empty_pipeline_does_not_crash():
     pipeline = Pipeline(settings=_test_settings())

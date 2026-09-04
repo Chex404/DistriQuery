@@ -22,6 +22,21 @@ def test_load_md(tmp_path):
     assert "heading" in doc.text
 
 
+def test_load_docx(tmp_path):
+    from docx import Document as DocxDocument
+
+    file_path = tmp_path / "doc.docx"
+    docx_file = DocxDocument()
+    docx_file.add_paragraph("First paragraph about DistriQuery.")
+    docx_file.add_paragraph("Second paragraph about Kafka.")
+    docx_file.save(str(file_path))
+
+    doc = load_document(str(file_path))
+
+    assert "DistriQuery" in doc.text
+    assert "Kafka" in doc.text
+
+
 def test_missing_file_raises(tmp_path):
     missing = tmp_path / "nope.txt"
 

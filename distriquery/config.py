@@ -49,4 +49,16 @@ class Settings:
     kafka_dlq_topic: str = os.environ.get("KAFKA_DLQ_TOPIC", "document-ingestion-dlq")
     kafka_max_retries: int = _env_int("KAFKA_MAX_RETRIES", 3)
 
+    
+    # "overlap" = dependency-free stand-in used in tests/this demo.
+    # "cross-encoder" = real reranking model (needs internet + torch).
+    reranker_backend: str = os.environ.get("RERANKER_BACKEND", "overlap")
+    cross_encoder_model: str = os.environ.get(
+        "CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
+    # How much bigger the pre-rerank shortlist is than the final top_k —
+    # e.g. top_k=4 with multiplier=5 retrieves 20 candidates, reranks down to 4.
+    rerank_shortlist_multiplier: int = _env_int("RERANK_SHORTLIST_MULTIPLIER", 5)
+    reranking_enabled: bool = os.environ.get("RERANKING_ENABLED", "true").lower() == "true"
+
 settings = Settings()

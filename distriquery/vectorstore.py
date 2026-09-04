@@ -32,6 +32,16 @@ class VectorStore(ABC):
     def __len__(self) -> int:
         raise NotImplementedError
 
+    @abstractmethod
+    def get_all_chunks(self) -> List[Chunk]:
+        """Return every stored chunk (text + metadata, no vectors needed).
+
+        This is what lets hybrid retrieval (Phase E) build a BM25 index
+        without needing a separate persistent store — Qdrant already
+        holds every chunk's text in its payload, so we can reuse it.
+        """
+        raise NotImplementedError
+
 
 class InMemoryVectorStore(VectorStore):
     """Keyed by chunk_id, upsert semantics — adding a chunk_id that already
@@ -71,6 +81,9 @@ class InMemoryVectorStore(VectorStore):
 
     def __len__(self) -> int:
         return len(self._chunks_by_id)
+
+    def get_all_chunks(self) -> List[Chunk]:
+        return list(self._chunks_by_id.values())
 
 
 class QdrantVectorStore(VectorStore):
@@ -126,3 +139,27 @@ class QdrantVectorStore(VectorStore):
     def __len__(self) -> int:
         info = self._client.get_collection(self._collection_name)
         return info.points_count
+
+    def get_all_chunks(self) -> List[Chunk]:
+        chunks = []
+        offset = None
+        while True:
+            points, offset = self._client.scroll(
+                collection_name=self._collection_name,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                chunks.append(
+                    Chunk(
+                        chunk_id=str(point.id),
+                        text=point.payload["text"],
+                        source=point.payload["source"],
+                        position=point.payload["position"],
+                    )
+                )
+            if offset is None:
+                break
+        return chunks

@@ -16,6 +16,8 @@ from distriquery.embedder import Embedder, get_embedder
 from distriquery.generator import FakeLLMClient, LLMClient, build_prompt, get_llm_client
 from distriquery.loader import load_document
 from distriquery.vectorstore import InMemoryVectorStore, SearchResult, VectorStore
+from distriquery.retriever import HybridRetriever
+from distriquery.reranker import Reranker, get_reranker
 
 
 @dataclass
@@ -31,6 +33,7 @@ class RetrievalTrace:
     strategy: str
     chunks_considered: int
     chunks_used: int
+    reranked: bool
 
 
 @dataclass
@@ -51,6 +54,7 @@ class Pipeline:
         embedder: Embedder = None,
         llm_client: LLMClient = None,
         vector_store: VectorStore = None,
+        reranker: Reranker = None
     ):
         self.settings = settings or default_settings
         self.embedder = embedder or get_embedder(
@@ -62,6 +66,10 @@ class Pipeline:
             self.settings.llm_backend, model=self.settings.anthropic_model
         )
         self.vector_store = vector_store if vector_store is not None else InMemoryVectorStore()
+        self.retriever = HybridRetriever(self.embedder, self.vector_store)
+        self.reranker = reranker or get_reranker(
+            self.settings.reranker_backend, model_name=self.settings.cross_encoder_model
+        )
     
     def ingest_document(self, path: str) -> int:
         """Load, chunk, embed, and store a document. Returns the number of chunks created."""
@@ -79,14 +87,25 @@ class Pipeline:
         self.vector_store.add(chunks, vectors)
         return len(chunks)
 
-    def answer(self, question: str, top_k: int = None) -> AnswerPayload:
+    def answer(self, question: str, top_k: int = None, rerank: bool = None) -> AnswerPayload:
         top_k = top_k or self.settings.top_k
+        rerank = self.settings.reranking_enabled if rerank is None else rerank
+
         start = time.perf_counter()
 
-        query_vector = self.embedder.embed([question])[0]
-        results: List[SearchResult] = self.vector_store.search(query_vector, top_k=top_k)
+        if rerank:
+            shortlist_k = max(top_k * self.settings.rerank_shortlist_multiplier, 20)
+            shortlist = self.retriever.retrieve(question, top_k=shortlist_k)
+            retrieval_ms = (time.perf_counter() - start) * 1000
 
-        retrieval_ms = (time.perf_counter() - start) * 1000
+            rerank_start = time.perf_counter()
+            results: List[SearchResult] = self.reranker.rerank(question, shortlist, top_k=top_k)
+            rerank_ms = (time.perf_counter() - rerank_start) * 1000
+        else:
+            results = self.retriever.retrieve(question, top_k=top_k)
+            retrieval_ms = (time.perf_counter() - start) * 1000
+            rerank_ms = 0.0
+
         generation_start = time.perf_counter()
 
         if isinstance(self.llm_client, FakeLLMClient):
@@ -111,11 +130,16 @@ class Pipeline:
             answer=answer_text,
             citations=citations,
             retrieval=RetrievalTrace(
-                strategy="dense",
+                strategy="hybrid",
+                reranked=rerank,
                 chunks_considered=len(self.vector_store),
                 chunks_used=len(results),
             ),
             metrics={
-                "latency_ms": {"retrieval": round(retrieval_ms, 2), "generation": round(generation_ms, 2)}
+                "latency_ms": {
+                    "retrieval": round(retrieval_ms, 2),
+                    "rerank": round(rerank_ms, 2),
+                    "generation": round(generation_ms, 2),
+                }
             },
         )
