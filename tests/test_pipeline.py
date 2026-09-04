@@ -12,6 +12,7 @@ def _test_settings(tmp_chunk_size: int = 300) -> Settings:
         llm_backend="fake",
         vector_store_backend="in-memory",
         reranker_backend="overlap",
+        agent_enabled=False,
     )
 
 
@@ -94,3 +95,53 @@ def test_explicitly_passed_empty_vector_store_is_not_silently_replaced():
     pipeline = Pipeline(settings=_test_settings(), vector_store=explicit_store)
 
     assert pipeline.vector_store is explicit_store
+
+def test_agent_disabled_by_default_even_for_a_tool_style_question(tmp_path):
+    file_path = tmp_path / "doc.txt"
+    file_path.write_text("Some content that has nothing to do with math.")
+
+    pipeline = Pipeline(settings=_test_settings())
+    pipeline.ingest_document(str(file_path))
+
+    payload = pipeline.answer("What is 12 + 7?")
+
+    assert payload.retrieval.strategy == "hybrid"
+
+
+def test_agent_enabled_routes_arithmetic_to_calculator_tool():
+    pipeline = Pipeline(settings=_test_settings())
+
+    payload = pipeline.answer("What is 12 + 7?", use_agent=True)
+
+    assert payload.retrieval.strategy == "tool"
+    assert "19" in payload.answer
+    assert payload.citations == []
+
+
+def test_agent_enabled_routes_comparison_to_multi_hop(tmp_path):
+    file_path = tmp_path / "doc.txt"
+    file_path.write_text(
+        "Kafka partitions events across brokers.\n\nQdrant stores and searches vectors."
+    )
+
+    pipeline = Pipeline(settings=_test_settings())
+    pipeline.ingest_document(str(file_path))
+
+    payload = pipeline.answer("Compare Kafka and Qdrant", use_agent=True)
+
+    assert payload.retrieval.strategy == "multi_hop"
+
+
+def test_agent_enabled_routes_plain_question_to_hybrid_unchanged(tmp_path):
+    file_path = tmp_path / "doc.txt"
+    file_path.write_text(
+        "The query planner decides between direct, hybrid, multi-hop, and tool retrieval."
+    )
+
+    pipeline = Pipeline(settings=_test_settings())
+    pipeline.ingest_document(str(file_path))
+
+    payload = pipeline.answer("What does the query planner decide between?", use_agent=True)
+
+    assert payload.retrieval.strategy == "hybrid"
+    assert len(payload.citations) > 0

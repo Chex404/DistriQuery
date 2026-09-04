@@ -61,4 +61,11 @@ class Settings:
     rerank_shortlist_multiplier: int = _env_int("RERANK_SHORTLIST_MULTIPLIER", 5)
     reranking_enabled: bool = os.environ.get("RERANKING_ENABLED", "true").lower() == "true"
 
+    
+    # Phase F: agentic query orchestration. Defaults to False so every
+    # existing test and the current API behavior are completely unchanged
+    # unless explicitly opted into — same "toggle" pattern as reranking.
+    agent_enabled: bool = os.environ.get("AGENT_ENABLED", "false").lower() == "true"
+    max_hops: int = _env_int("MAX_HOPS", 2)
+
 settings = Settings()

@@ -120,6 +120,20 @@ def test_query_after_upload_returns_answer(client, create_tenant_helper, process
     assert body["answer"]
     assert len(body["citations"]) > 0
 
+def test_query_with_use_agent_routes_arithmetic_to_tool(client, create_tenant_helper):
+    _, api_key = create_tenant_helper(name="acme")
+ 
+    response = client.post(
+        "/query",
+        json={"question": "What is 12 + 7?", "use_agent": True},
+        headers={"X-API-Key": api_key},
+    )
+ 
+    assert response.status_code == 200
+    body = response.json()
+    assert body["retrieval"]["strategy"] == "tool"
+    assert "19" in body["answer"]
+
 def test_query_with_empty_question_returns_400(client, create_tenant_helper):
     _, api_key = create_tenant_helper(name="acme")
 

@@ -34,6 +34,7 @@ def _use_fast_test_backends(monkeypatch):
     monkeypatch.setattr(settings, "llm_backend", "fake")
     monkeypatch.setattr(settings, "vector_store_backend", "in-memory")
     monkeypatch.setattr(settings, "reranker_backend", "overlap")
+    monkeypatch.setattr(settings, "agent_enabled", False)
 
 @pytest.fixture
 def db_session_factory(tmp_path):

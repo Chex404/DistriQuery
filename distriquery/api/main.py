@@ -52,10 +52,11 @@ def _upload_dir() -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
-
 class QueryRequest(BaseModel):
     question: str
     top_k: Optional[int] = None
+    rerank: Optional[bool] = None
+    use_agent: Optional[bool] = None
 
 
 @app.get("/health")
@@ -149,5 +150,7 @@ def query(
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="'question' must not be empty")
 
-    payload = pipeline.answer(request.question, top_k=request.top_k)
+    payload = pipeline.answer(
+        request.question, top_k=request.top_k, rerank=request.rerank, use_agent=request.use_agent
+    )
     return payload.to_dict()
