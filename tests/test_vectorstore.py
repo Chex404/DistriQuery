@@ -5,9 +5,8 @@ from distriquery.chunker import Chunk
 from distriquery.vectorstore import InMemoryVectorStore
 
 
-def _make_chunk(chunk_id: str, text: str) -> Chunk:
-    return Chunk(chunk_id=chunk_id, text=text, source="doc1", position=0)
-
+def _make_chunk(chunk_id: str, text: str, source: str = "doc1") -> Chunk:
+    return Chunk(chunk_id=chunk_id, text=text, source=source, position=0)
 
 def test_search_returns_closest_vector_first():
     store = InMemoryVectorStore()
@@ -75,3 +74,26 @@ def test_multiple_add_calls_accumulate():
     store.add([_make_chunk("b", "y")], np.zeros((1, 3), dtype=np.float32))
 
     assert len(store) == 2
+
+def test_delete_by_source_removes_only_matching_chunks():
+    store = InMemoryVectorStore()
+    store.add(
+        [_make_chunk("a", "from doc1", source="doc1"), _make_chunk("b", "also doc1", source="doc1")],
+        np.zeros((2, 3), dtype=np.float32),
+    )
+    store.add([_make_chunk("c", "from doc2", source="doc2")], np.zeros((1, 3), dtype=np.float32))
+
+    store.delete_by_source("doc1")
+
+    assert len(store) == 1
+    remaining = store.get_all_chunks()
+    assert remaining[0].chunk_id == "c"
+
+
+def test_delete_by_source_on_nonexistent_source_is_a_safe_noop():
+    store = InMemoryVectorStore()
+    store.add([_make_chunk("a", "text")], np.zeros((1, 3), dtype=np.float32))
+
+    store.delete_by_source("never-existed")
+
+    assert len(store) == 1

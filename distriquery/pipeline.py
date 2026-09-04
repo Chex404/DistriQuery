@@ -86,6 +86,7 @@ class Pipeline:
         self.multi_hop_retriever = MultiHopRetriever(self.retriever, max_hops=self.settings.max_hops)
 
     def ingest_document(self, path: str) -> int:
+        """Load, chunk, embed, and store a document. Returns the number of chunks created."""
         document = load_document(path)
         chunks = chunk_text(
             document.text,
@@ -93,13 +94,20 @@ class Pipeline:
             chunk_size=self.settings.chunk_size,
             chunk_overlap=self.settings.chunk_overlap,
         )
+
+        # Delete-then-insert, not upsert-only: a shrinking re-ingestion
+        # would otherwise leave old positions behind as orphaned stale
+        # chunks — a real bug Phase I's experiments found and confirmed.
+        # Safe to call even on a brand-new source (deletes nothing).
+        self.vector_store.delete_by_source(document.source)
+
         if not chunks:
             return 0
 
         vectors = self.embedder.embed([c.text for c in chunks])
         self.vector_store.add(chunks, vectors)
         return len(chunks)
-
+    
     def answer(
         self,
         question: str,

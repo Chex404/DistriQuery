@@ -42,6 +42,20 @@ class VectorStore(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def delete_by_source(self, source: str) -> None:
+        """Remove every chunk belonging to a given source.
+
+        Phase I found a real bug this fixes: deterministic chunk IDs
+        (source + position) make upsert-based re-ingestion correctly
+        overwrite positions that still exist in a new version — but if a
+        document SHRINKS, positions beyond the new chunk count were never
+        touched, leaving orphaned stale chunks silently retrievable.
+        Calling this before every ingest_document() gives correct
+        "replace" semantics instead of "upsert-only."
+        """
+        raise NotImplementedError
+
 
 class InMemoryVectorStore(VectorStore):
     """Keyed by chunk_id, upsert semantics — adding a chunk_id that already
@@ -84,6 +98,14 @@ class InMemoryVectorStore(VectorStore):
 
     def get_all_chunks(self) -> List[Chunk]:
         return list(self._chunks_by_id.values())
+
+    def delete_by_source(self, source: str) -> None:
+        stale_ids = [
+            chunk_id for chunk_id, chunk in self._chunks_by_id.items() if chunk.source == source
+        ]
+        for chunk_id in stale_ids:
+            del self._chunks_by_id[chunk_id]
+            del self._vectors_by_id[chunk_id]
 
 
 class QdrantVectorStore(VectorStore):
@@ -163,3 +185,13 @@ class QdrantVectorStore(VectorStore):
             if offset is None:
                 break
         return chunks
+
+    def delete_by_source(self, source: str) -> None:
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+        self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=Filter(
+                must=[FieldCondition(key="source", match=MatchValue(value=source))]
+            ),
+        )
